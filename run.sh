@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# NOFX Docker 启动脚本 - 兼容 ash shell
+# NOFX Docker 启动脚本 - 兼容 ash shell（不含构建）
 
 # 颜色定义
 RED='\033[0;31m'
@@ -30,7 +30,7 @@ check_docker() {
     fi
 }
 
-# 启动服务
+# 启动服务（不含构建）
 start_services() {
     print_info "启动 NOFX 服务..."
 
@@ -42,14 +42,11 @@ start_services() {
         fi
     fi
 
-    # 尝试 docker compose 或 docker-compose
+    # 尝试 docker compose 或 docker-compose（不构建）
     if command -v docker-compose >/dev/null 2>&1; then
-        docker-compose up -d --build
-    elif docker compose version >/dev/null 2>&1; then
-        docker compose up -d --build
+        docker-compose up -d
     else
-        print_error "Docker Compose 未安装"
-        exit 1
+        docker compose up -d
     fi
 
     if [ $? -eq 0 ]; then
@@ -117,11 +114,13 @@ case "$1" in
         echo "用法: $0 {start|stop|restart|status|logs}"
         echo ""
         echo "命令:"
-        echo "  start   - 启动服务"
+        echo "  start   - 启动服务（不构建镜像）"
         echo "  stop    - 停止服务"
         echo "  restart - 重启服务"
         echo "  status  - 查看状态"
         echo "  logs    - 查看日志"
+        echo ""
+        echo "注意：请先手动构建镜像 docker-compose build"
         exit 1
         ;;
 esac
