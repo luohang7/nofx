@@ -333,6 +333,9 @@ export const translations = {
     promptDescTaroLong: '📈 Taro Long Position Strategy',
     promptDescTaroLongContent:
       'Data-driven decisions, multi-dimensional validation, continuous learning evolution, long position specialist',
+    promptDescSentimentEnhanced: '💡 Sentiment Enhanced Trading',
+    promptDescSentimentEnhancedContent:
+      'Enhanced with funding rate and market sentiment analysis, utilizes emotion indicators for trading decisions',
 
     // Loading & Error
     loading: 'Loading...',
@@ -1168,6 +1171,7 @@ export const translations = {
     promptTemplateHansen: 'Hansen 策略',
     promptTemplateNof1: 'NoF1 英文框架',
     promptTemplateTaroLong: 'Taro 长仓',
+    promptTemplateSentimentEnhanced: '情绪分析增强',
     promptDescDefault: '📊 默认稳健策略',
     promptDescDefaultContent:
       '最大化夏普比率，平衡风险收益，适合新手和长期稳定交易',
@@ -1185,6 +1189,9 @@ export const translations = {
     promptDescTaroLong: '📈 Taro 长仓策略',
     promptDescTaroLongContent:
       '数据驱动决策，多维度验证，持续学习进化，长仓专用',
+    promptDescSentimentEnhanced: '💡 情绪分析增强交易',
+    promptDescSentimentEnhancedContent:
+      '增强资金费率和市场情绪分析，利用情绪指标辅助交易决策',
 
     // Loading & Error
     loading: '加载中...',
