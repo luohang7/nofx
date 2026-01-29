@@ -197,21 +197,23 @@ func formatRecentTradesZH(orders []RecentOrder) string {
 	sb.WriteString("## 最近完成的交易\n\n")
 
 	for i, order := range orders {
-		// 判断盈亏
+		// 使用净利润（扣除手续费后）判断盈亏
+		netPnL := order.NetPnL
 		profitOrLoss := "盈利"
-		if order.RealizedPnL < 0 {
+		if netPnL < 0 {
 			profitOrLoss = "亏损"
 		}
 
-		sb.WriteString(fmt.Sprintf("%d. %s %s | 进场 %.4f 出场 %.4f | %s: %+.2f USDT (%+.2f%%) | %s → %s (%s)\n",
+		sb.WriteString(fmt.Sprintf("%d. %s %s | 进场 %.4f 出场 %.4f | %s: %+.2f USDT (%+.2f%%) | 手续费: -%.2f USDT | %s → %s (%s)\n",
 			i+1,
 			order.Symbol,
 			order.Side,
 			order.EntryPrice,
 			order.ExitPrice,
 			profitOrLoss,
-			order.RealizedPnL,
+			netPnL,
 			order.PnLPct,
+			order.Fee,
 			order.EntryTime,
 			order.ExitTime,
 			order.HoldDuration,
@@ -466,20 +468,23 @@ func formatRecentTradesEN(orders []RecentOrder) string {
 	sb.WriteString("## Recent Completed Trades\n\n")
 
 	for i, order := range orders {
+		// Use NetPnL (profit after fee) for display
+		netPnL := order.NetPnL
 		profitOrLoss := "Profit"
-		if order.RealizedPnL < 0 {
+		if netPnL < 0 {
 			profitOrLoss = "Loss"
 		}
 
-		sb.WriteString(fmt.Sprintf("%d. %s %s | Entry %.4f Exit %.4f | %s: %+.2f USDT (%+.2f%%) | %s → %s (%s)\n",
+		sb.WriteString(fmt.Sprintf("%d. %s %s | Entry %.4f Exit %.4f | %s: %+.2f USDT (%+.2f%%) | Fee: -%.2f USDT | %s → %s (%s)\n",
 			i+1,
 			order.Symbol,
 			order.Side,
 			order.EntryPrice,
 			order.ExitPrice,
 			profitOrLoss,
-			order.RealizedPnL,
+			netPnL,
 			order.PnLPct,
+			order.Fee,
 			order.EntryTime,
 			order.ExitTime,
 			order.HoldDuration,

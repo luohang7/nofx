@@ -437,6 +437,9 @@ func (s *PositionStore) GetFullStats(traderID string) (*TraderStats, error) {
 		stats.MaxDrawdownPct = calculateMaxDrawdownFromPnls(pnls)
 	}
 
+	// Convert TotalPnL to net PnL (after fees)
+	stats.TotalPnL -= stats.TotalFee
+
 	return stats, nil
 }
 
@@ -447,6 +450,8 @@ type RecentTrade struct {
 	EntryPrice   float64 `json:"entry_price"`
 	ExitPrice    float64 `json:"exit_price"`
 	RealizedPnL  float64 `json:"realized_pnl"`
+	Fee          float64 `json:"fee"`           // Trading fee
+	NetPnL       float64 `json:"net_pnl"`       // Net profit after fee (RealizedPnL - Fee)
 	PnLPct       float64 `json:"pnl_pct"`
 	EntryTime    int64   `json:"entry_time"`
 	ExitTime     int64   `json:"exit_time"`
@@ -472,6 +477,8 @@ func (s *PositionStore) GetRecentTrades(traderID string, limit int) ([]RecentTra
 			EntryPrice:  pos.EntryPrice,
 			ExitPrice:   pos.ExitPrice,
 			RealizedPnL: pos.RealizedPnL,
+			Fee:         pos.Fee,
+			NetPnL:      pos.RealizedPnL - pos.Fee, // Net profit after fee
 			EntryTime:   pos.EntryTime / 1000, // Convert ms to seconds for API compatibility
 		}
 

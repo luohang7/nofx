@@ -17,7 +17,7 @@ const (
 )
 
 var (
-	DefaultTimeout = 120 * time.Second
+	DefaultTimeout = 600 * time.Second  // 10 minutes timeout for reasoning models
 
 	MaxRetryTimes = 3
 

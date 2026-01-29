@@ -980,8 +980,8 @@ func (t *FuturesTrader) CalculatePositionSize(balance, riskPercent, price float6
 	return quantity
 }
 
-// SetStopLoss sets stop-loss order using new Algo Order API
-// Binance has migrated stop orders to Algo Order system (error -4120 STOP_ORDER_SWITCH_ALGO)
+// SetStopLoss sets stop-loss order using limit order (maker fee, lower cost)
+// Uses STOP Algo Order type with limit price to ensure better execution price
 func (t *FuturesTrader) SetStopLoss(symbol string, positionSide string, quantity, stopPrice float64) error {
 	var side futures.SideType
 	var posSide futures.PositionSideType
@@ -994,28 +994,40 @@ func (t *FuturesTrader) SetStopLoss(symbol string, positionSide string, quantity
 		posSide = futures.PositionSideTypeShort
 	}
 
-	// Use new Algo Order API
-	_, err := t.client.NewCreateAlgoOrderService().
+	// Format price and quantity with correct precision
+	priceStr, err := t.FormatPrice(symbol, stopPrice)
+	if err != nil {
+		return fmt.Errorf("failed to format stop price: %w", err)
+	}
+	quantityStr, err := t.FormatQuantity(symbol, quantity)
+	if err != nil {
+		return fmt.Errorf("failed to format quantity: %w", err)
+	}
+
+	// Use STOP type with limit price (trigger at stopPrice, execute as limit order at stopPrice)
+	_, err = t.client.NewCreateAlgoOrderService().
 		Symbol(symbol).
 		Side(side).
 		PositionSide(posSide).
-		Type(futures.AlgoOrderTypeStopMarket).
-		TriggerPrice(fmt.Sprintf("%.8f", stopPrice)).
+		Type(futures.AlgoOrderTypeStop).  // STOP with limit (not StopMarket)
+		TriggerPrice(priceStr).               // Trigger price (price to trigger the order)
+		Price(priceStr).                       // Limit price (price to execute after trigger)
+		Quantity(quantityStr).
+		TimeInForce(futures.TimeInForceTypeGTC).  // Good Till Cancelled
 		WorkingType(futures.WorkingTypeContractPrice).
-		ClosePosition(true).
 		ClientAlgoId(getBrOrderID()).
 		Do(context.Background())
 
 	if err != nil {
-		return fmt.Errorf("failed to set stop-loss: %w", err)
+		return fmt.Errorf("failed to set stop-loss limit order: %w", err)
 	}
 
-	logger.Infof("  Stop-loss price set (Algo Order): %.4f", stopPrice)
+	logger.Infof("  Stop-loss limit order set: trigger @ %.4f, limit @ %.4f", stopPrice, stopPrice)
 	return nil
 }
 
-// SetTakeProfit sets take-profit order using new Algo Order API
-// Binance has migrated stop orders to Algo Order system (error -4120 STOP_ORDER_SWITCH_ALGO)
+// SetTakeProfit sets take-profit order using limit order (maker fee, lower cost)
+// Uses TAKE_PROFIT Algo Order type with limit price to ensure better execution price
 func (t *FuturesTrader) SetTakeProfit(symbol string, positionSide string, quantity, takeProfitPrice float64) error {
 	var side futures.SideType
 	var posSide futures.PositionSideType
@@ -1028,23 +1040,35 @@ func (t *FuturesTrader) SetTakeProfit(symbol string, positionSide string, quanti
 		posSide = futures.PositionSideTypeShort
 	}
 
-	// Use new Algo Order API
-	_, err := t.client.NewCreateAlgoOrderService().
+	// Format price and quantity with correct precision
+	priceStr, err := t.FormatPrice(symbol, takeProfitPrice)
+	if err != nil {
+		return fmt.Errorf("failed to format take profit price: %w", err)
+	}
+	quantityStr, err := t.FormatQuantity(symbol, quantity)
+	if err != nil {
+		return fmt.Errorf("failed to format quantity: %w", err)
+	}
+
+	// Use TAKE_PROFIT type with limit price (trigger at takeProfitPrice, execute as limit order)
+	_, err = t.client.NewCreateAlgoOrderService().
 		Symbol(symbol).
 		Side(side).
 		PositionSide(posSide).
-		Type(futures.AlgoOrderTypeTakeProfitMarket).
-		TriggerPrice(fmt.Sprintf("%.8f", takeProfitPrice)).
+		Type(futures.AlgoOrderTypeTakeProfit).  // TAKE_PROFIT with limit (not TakeProfitMarket)
+		TriggerPrice(priceStr).               // Trigger price (price to trigger the order)
+		Price(priceStr).                       // Limit price (price to execute after trigger)
+		Quantity(quantityStr).
+		TimeInForce(futures.TimeInForceTypeGTC).  // Good Till Cancelled
 		WorkingType(futures.WorkingTypeContractPrice).
-		ClosePosition(true).
 		ClientAlgoId(getBrOrderID()).
 		Do(context.Background())
 
 	if err != nil {
-		return fmt.Errorf("failed to set take-profit: %w", err)
+		return fmt.Errorf("failed to set take-profit limit order: %w", err)
 	}
 
-	logger.Infof("  Take-profit price set (Algo Order): %.4f", takeProfitPrice)
+	logger.Infof("  Take-profit limit order set: trigger @ %.4f, limit @ %.4f", takeProfitPrice, takeProfitPrice)
 	return nil
 }
 

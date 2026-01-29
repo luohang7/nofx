@@ -56,13 +56,12 @@ func (pb *PromptBuilder) buildSystemPromptZH() string {
 ## 决策原则
 
 ### 风险优先
-- 保证金使用率不得超过30%
-- 单个持仓亏损达到-5%必须止损
+- 单个持仓亏损达到-40%必须止损
 - 优先保护资本，再考虑盈利
 
 ### 跟踪止盈
 - 当持仓盈亏从峰值回撤30%时，考虑部分或全部止盈
-- 例如：Peak PnL +5%，Current PnL +3.5% → 回撤了30%，应该止盈
+- 重要：显示的 PnL% 已包含杠杆影响，10倍杠杆时+10%收益实际价格仅涨约1%，需考虑手续费成本
 
 ### 顺势交易
 - 只在多个时间框架趋势一致时进场
@@ -72,7 +71,7 @@ func (pb *PromptBuilder) buildSystemPromptZH() string {
 
 ### 分批操作
 - 分批建仓：第一次开仓不超过目标仓位的50%
-- 分批止盈：盈利3%平33%，盈利5%平50%，盈利8%全平
+- 分批止盈：根据实际收益和趋势强度决定分批比例
 - 只在盈利仓位上加仓，永远不要追亏损
 
 ## 输出格式要求
@@ -85,7 +84,7 @@ func (pb *PromptBuilder) buildSystemPromptZH() string {
     "symbol": "BTCUSDT",
     "action": "HOLD|PARTIAL_CLOSE|FULL_CLOSE|ADD_POSITION|OPEN_NEW|WAIT",
     "leverage": 3,
-    "position_size_usd": 1000,
+    "position_size_usd": 根据账户权益和配置的比例计算,
     "stop_loss": 42000,
     "take_profit": 48000,
     "confidence": 85,
@@ -164,11 +163,11 @@ func (pb *PromptBuilder) getDecisionRequirementsZH() string {
     "symbol": "HUSDT",
     "action": "OPEN_NEW",
     "leverage": 3,
-    "position_size_usd": 500,
+    "position_size_usd": 根据账户权益和配置的比例计算,
     "stop_loss": 0.1560,
     "take_profit": 0.1720,
     "confidence": 75,
-    "reasoning": "HUSDT在5分钟时间框架突破关键阻力位0.1630，持仓量1小时内增加+1.57M (+0.89%)，配合价格上涨+4.92%，符合'OI增加+价格上涨'的强多头模式。15分钟和1小时时间框架均呈现上涨趋势，多周期共振。建议开仓做多，止损设在突破点下方-5%，止盈目标+8%。"
+    "reasoning": "HUSDT在5分钟时间框架突破关键阻力位0.1630，持仓量1小时内增加+1.57M (+0.89%)，配合价格上涨+4.92%，符合'OI增加+价格上涨'的强多头模式。15分钟和1小时时间框架均呈现上涨趋势，多周期共振。建议开仓做多。"
   }
 ]
 ` + "```" + `
@@ -191,13 +190,12 @@ func (pb *PromptBuilder) buildSystemPromptEN() string {
 ## Decision Principles
 
 ### Risk First
-- Margin usage must not exceed 30%
-- Must stop-loss when single position loss reaches -5%
+- Must stop-loss when single position loss reaches -40%
 - Capital protection first, profit second
 
 ### Trailing Take-Profit
 - Consider partial/full profit-taking when PnL pulls back 30% from peak
-- Example: Peak PnL +5%, Current PnL +3.5% → 30% drawdown, should take profit
+- Important: Displayed PnL% includes leverage effect. With 10x leverage, +10% gain means only ~1% price movement, consider trading fees
 
 ### Trend Following
 - Only enter when trends align across multiple timeframes
@@ -207,7 +205,7 @@ func (pb *PromptBuilder) buildSystemPromptEN() string {
 
 ### Scale Operations
 - Scale-in: First entry max 50% of target position
-- Scale-out: Close 33% at +3%, 50% at +5%, 100% at +8%
+- Scale-out: Decide exit percentages based on actual gain and trend strength
 - Only add to winning positions, never average down losers
 
 ## Output Format Requirements
@@ -220,7 +218,7 @@ func (pb *PromptBuilder) buildSystemPromptEN() string {
     "symbol": "BTCUSDT",
     "action": "HOLD|PARTIAL_CLOSE|FULL_CLOSE|ADD_POSITION|OPEN_NEW|WAIT",
     "leverage": 3,
-    "position_size_usd": 1000,
+    "position_size_usd": Calculate based on account equity and configured ratio,
     "stop_loss": 42000,
     "take_profit": 48000,
     "confidence": 85,
@@ -299,11 +297,11 @@ func (pb *PromptBuilder) getDecisionRequirementsEN() string {
     "symbol": "HUSDT",
     "action": "OPEN_NEW",
     "leverage": 3,
-    "position_size_usd": 500,
+    "position_size_usd": Calculate based on account equity and configured ratio,
     "stop_loss": 0.1560,
     "take_profit": 0.1720,
     "confidence": 75,
-    "reasoning": "HUSDT broke key resistance 0.1630 on 5M timeframe. OI increased +1.57M (+0.89%) in 1H paired with price +4.92%, matching 'OI up + price up' strong bullish pattern. Both 15M and 1H timeframes show uptrend, multi-timeframe resonance confirmed. Recommend long entry, stop-loss -5% below breakout, target +8% profit."
+    "reasoning": "HUSDT broke key resistance 0.1630 on 5M timeframe. OI increased +1.57M (+0.89%) in 1H paired with price +4.92%, matching 'OI up + price up' strong bullish pattern. Both 15M and 1H timeframes show uptrend, multi-timeframe resonance confirmed. Recommend long entry."
   }
 ]
 ` + "```" + `

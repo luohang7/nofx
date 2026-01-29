@@ -47,6 +47,7 @@ function ActionCard({ action, language, onSymbolClick }: { action: DecisionActio
   const config = ACTION_CONFIG[action.action] || ACTION_CONFIG.wait
   const isLong = action.action.includes('long')
   const isOpen = action.action.includes('open')
+  const isHold = action.action === 'hold'  // hold action shows SL/TP
 
   return (
     <div
@@ -98,61 +99,86 @@ function ActionCard({ action, language, onSymbolClick }: { action: DecisionActio
       </div>
 
       {/* Trading Details Grid */}
-      {isOpen && (
+      {(isOpen || action.action.includes('close') || action.action === 'hold') && (
         <div className="grid grid-cols-4 gap-3 mt-3 pt-3" style={{ borderTop: '1px solid #2B3139' }}>
-          {/* Entry Price */}
+          {/* Entry Price / Close Price / Current Position */}
           <div className="text-center">
             <div className="text-xs mb-1" style={{ color: '#848E9C' }}>
-              {t('entryPrice', language)}
+              {isOpen ? t('entryPrice', language) : (action.action === 'hold' ? '当前' : t('closePrice', language))}
             </div>
             <div className="font-mono font-semibold" style={{ color: '#EAECEF' }}>
               {formatPrice(action.price)}
             </div>
           </div>
 
-          {/* Stop Loss */}
-          <div className="text-center">
-            <div className="text-xs mb-1" style={{ color: '#F6465D' }}>
-              {t('stopLoss', language)}
-            </div>
-            <div className="font-mono font-semibold" style={{ color: '#F6465D' }}>
-              {formatPrice(action.stop_loss)}
-            </div>
-            {action.stop_loss && action.price && (
-              <div className="text-xs mt-0.5" style={{ color: '#848E9C' }}>
-                {calcPctChange(action.price, action.stop_loss, isLong)}
-              </div>
-            )}
-          </div>
-
-          {/* Take Profit */}
-          <div className="text-center">
-            <div className="text-xs mb-1" style={{ color: '#0ECB81' }}>
-              {t('takeProfit', language)}
-            </div>
-            <div className="font-mono font-semibold" style={{ color: '#0ECB81' }}>
-              {formatPrice(action.take_profit)}
-            </div>
-            {action.take_profit && action.price && (
-              <div className="text-xs mt-0.5" style={{ color: '#848E9C' }}>
-                {calcPctChange(action.price, action.take_profit, isLong)}
-              </div>
-            )}
-          </div>
-
-          {/* Leverage */}
+          {/* Quantity / Position Size */}
           <div className="text-center">
             <div className="text-xs mb-1" style={{ color: '#848E9C' }}>
-              {t('leverage', language)}
+              {(isOpen || isHold) ? t('quantity', language) : t('closeAmount', language)}
             </div>
-            <div className="font-mono font-semibold" style={{ color: '#F0B90B' }}>
-              {action.leverage}x
+            <div className="font-mono font-semibold" style={{ color: '#EAECEF' }}>
+              {(isOpen || isHold) ? (
+                formatPrice(action.quantity)
+              ) : (
+                <>
+                  {formatPrice(action.quantity)}
+                  <span className="text-xs ml-1" style={{ color: action.price ? '#F0B90B' : '#848E9C' }}>
+                    (~{action.price ? formatPrice(action.quantity * action.price) : '-'} USDT)
+                  </span>
+                </>
+              )}
             </div>
+          </div>
+
+          {/* Stop Loss (for open/hold) or Empty (for close) */}
+          <div className="text-center">
+            <div className="text-xs mb-1" style={{ color: (isOpen || isHold) ? '#F6465D' : '#848E9C' }}>
+              {(isOpen || isHold) ? t('stopLoss', language) : '-'}
+            </div>
+            {(isOpen || isHold) ? (
+              <>
+                <div className="font-mono font-semibold" style={{ color: '#F6465D' }}>
+                  {formatPrice(action.stop_loss)}
+                </div>
+                {/* Only show percentage for open positions, not for hold */}
+                {!isHold && action.stop_loss && action.price && (
+                  <div className="text-xs mt-0.5" style={{ color: '#848E9C' }}>
+                    {calcPctChange(action.price, action.stop_loss, isLong)}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="font-mono" style={{ color: '#848E9C' }}>-</div>
+            )}
+          </div>
+
+          {/* Take Profit (for open/hold) or Leverage (for close) */}
+          <div className="text-center">
+            <div className="text-xs mb-1" style={{ color: (isOpen || isHold) ? '#0ECB81' : '#848E9C' }}>
+              {(isOpen || isHold) ? t('takeProfit', language) : t('leverage', language)}
+            </div>
+            {(isOpen || isHold) ? (
+              <>
+                <div className="font-mono font-semibold" style={{ color: '#0ECB81' }}>
+                  {formatPrice(action.take_profit)}
+                </div>
+                {/* Only show percentage for open positions, not for hold */}
+                {!isHold && action.take_profit && action.price && (
+                  <div className="text-xs mt-0.5" style={{ color: '#848E9C' }}>
+                    {calcPctChange(action.price, action.take_profit, isLong)}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="font-mono font-semibold" style={{ color: '#F0B90B' }}>
+                {action.leverage}x
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {/* Risk/Reward Ratio for open positions */}
+      {/* Risk/Reward Ratio for open positions only (not for hold, as price may be 0) */}
       {isOpen && action.stop_loss && action.take_profit && action.price && (
         <div className="mt-3 pt-3 flex items-center justify-between" style={{ borderTop: '1px solid #2B3139' }}>
           <span className="text-xs" style={{ color: '#848E9C' }}>{t('riskReward', language)}</span>

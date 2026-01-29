@@ -97,7 +97,9 @@ type RecentOrder struct {
 	Side         string  `json:"side"`          // long/short
 	EntryPrice   float64 `json:"entry_price"`   // Entry price
 	ExitPrice    float64 `json:"exit_price"`    // Exit price
-	RealizedPnL  float64 `json:"realized_pnl"`  // Realized profit/loss
+	RealizedPnL  float64 `json:"realized_pnl"`  // Realized profit/loss (before fee)
+	Fee          float64 `json:"fee"`           // Trading fee
+	NetPnL       float64 `json:"net_pnl"`       // Net profit after fee (RealizedPnL - Fee)
 	PnLPct       float64 `json:"pnl_pct"`       // Profit/loss percentage
 	EntryTime    string  `json:"entry_time"`    // Entry time
 	ExitTime     string  `json:"exit_time"`     // Exit time
@@ -1037,13 +1039,17 @@ func (e *StrategyEngine) BuildSystemPrompt(accountEquity float64, variant string
 	examplePositionSize := accountEquity * btcEthPosValueRatio
 	sb.WriteString(fmt.Sprintf("  {\"symbol\": \"BTCUSDT\", \"action\": \"open_short\", \"leverage\": %d, \"position_size_usd\": %.0f, \"stop_loss\": 97000, \"take_profit\": 91000, \"confidence\": 85, \"risk_usd\": 300},\n",
 		riskControl.BTCETHMaxLeverage, examplePositionSize))
-	sb.WriteString("  {\"symbol\": \"ETHUSDT\", \"action\": \"close_long\"}\n")
+	sb.WriteString("  {\"symbol\": \"ETHUSDT\", \"action\": \"close_long\"},\n")
+	sb.WriteString("  {\"symbol\": \"SOLUSDT\", \"action\": \"wait\", \"confidence\": 60}\n")
 	sb.WriteString("]\n```\n")
 	sb.WriteString("</decision>\n\n")
 	sb.WriteString("## Field Description\n\n")
 	sb.WriteString("- `action`: open_long | open_short | close_long | close_short | hold | wait\n")
 	sb.WriteString(fmt.Sprintf("- `confidence`: 0-100 (opening recommended ≥ %d)\n", riskControl.MinConfidence))
-	sb.WriteString("- Required when opening: leverage, position_size_usd, stop_loss, take_profit, confidence, risk_usd\n")
+	sb.WriteString("- **Required ONLY when opening (open_long/open_short)**: leverage, position_size_usd, stop_loss, take_profit, risk_usd\n")
+	sb.WriteString("- **For close actions (close_long/close_short)**: Optionally include `position_size_usd` for partial close (default: close all)\n")
+	sb.WriteString("- **For hold/wait actions**: Optionally include `stop_loss` and/or `take_profit` to update existing stop-loss/take-profit orders\n")
+	sb.WriteString("- **For close/wait/hold actions**: DO NOT include leverage, position_size_usd (for hold), risk_usd fields\n")
 	sb.WriteString("- **IMPORTANT**: All numeric values must be calculated numbers, NOT formulas/expressions (e.g., use `27.76` not `3000 * 0.01`)\n\n")
 
 	// 8. Custom Prompt
@@ -1157,14 +1163,15 @@ func (e *StrategyEngine) BuildUserPrompt(ctx *Context) string {
 	if len(ctx.RecentOrders) > 0 {
 		sb.WriteString("## Recent Completed Trades\n")
 		for i, order := range ctx.RecentOrders {
+			// Use NetPnL (profit after fee) for display
 			resultStr := "Profit"
-			if order.RealizedPnL < 0 {
+			if order.NetPnL < 0 {
 				resultStr = "Loss"
 			}
-			sb.WriteString(fmt.Sprintf("%d. %s %s | Entry %.4f Exit %.4f | %s: %+.2f USDT (%+.2f%%) | %s→%s (%s)\n",
+			sb.WriteString(fmt.Sprintf("%d. %s %s | Entry %.4f Exit %.4f | %s: %+.2f USDT (%+.2f%%) | Fee: -%.2f USDT | %s→%s (%s)\n",
 				i+1, order.Symbol, order.Side,
 				order.EntryPrice, order.ExitPrice,
-				resultStr, order.RealizedPnL, order.PnLPct,
+				resultStr, order.NetPnL, order.PnLPct, order.Fee,
 				order.EntryTime, order.ExitTime, order.HoldDuration))
 		}
 		sb.WriteString("\n")
@@ -1188,7 +1195,7 @@ func (e *StrategyEngine) BuildUserPrompt(ctx *Context) string {
 				ctx.TradingStats.ProfitFactor,
 				ctx.TradingStats.SharpeRatio,
 				winLossRatio))
-			sb.WriteString(fmt.Sprintf("总盈亏: %+.2f USDT | 平均盈利: +%.2f | 平均亏损: -%.2f | 最大回撤: %.1f%%\n",
+			sb.WriteString(fmt.Sprintf("净盈亏: %+.2f USDT | 平均盈利: +%.2f | 平均亏损: -%.2f | 最大回撤: %.1f%%\n",
 				ctx.TradingStats.TotalPnL,
 				ctx.TradingStats.AvgWin,
 				ctx.TradingStats.AvgLoss,
@@ -1211,7 +1218,7 @@ func (e *StrategyEngine) BuildUserPrompt(ctx *Context) string {
 				ctx.TradingStats.ProfitFactor,
 				ctx.TradingStats.SharpeRatio,
 				winLossRatio))
-			sb.WriteString(fmt.Sprintf("Total PnL: %+.2f USDT | Avg Win: +%.2f | Avg Loss: -%.2f | Max Drawdown: %.1f%%\n",
+			sb.WriteString(fmt.Sprintf("Net PnL: %+.2f USDT | Avg Win: +%.2f | Avg Loss: -%.2f | Max Drawdown: %.1f%%\n",
 				ctx.TradingStats.TotalPnL,
 				ctx.TradingStats.AvgWin,
 				ctx.TradingStats.AvgLoss,
@@ -1715,6 +1722,27 @@ func extractCoTTrace(response string) string {
 	return strings.TrimSpace(response)
 }
 
+// cleanEmptyStringFields replaces empty strings and "N/A" in numeric fields with null
+// This handles AI responses that send "" or "N/A" instead of null for optional numeric fields
+func cleanEmptyStringFields(jsonStr string) string {
+	// Replace empty strings and "N/A" in common numeric fields with null
+	// Pattern: "field": ""  ->  "field": null
+	//          "field": "N/A"  ->  "field": null
+	fieldsToClean := []string{
+		"stop_loss", "take_profit", "leverage", "position_size_usd",
+		"price", "quantity", "risk_usd",
+	}
+	for _, field := range fieldsToClean {
+		// Match: "field": ""  or  "field": "N/A"
+		// Use regex to handle various spacing formats
+		// Pattern matches both "" and "N/A" (case-insensitive)
+		pattern := fmt.Sprintf(`"%s"\s*:\s*"(N/A|)"`, regexp.QuoteMeta(field))
+		re := regexp.MustCompile(pattern)
+		jsonStr = re.ReplaceAllString(jsonStr, fmt.Sprintf(`"%s": null`, field))
+	}
+	return jsonStr
+}
+
 func extractDecisions(response string) ([]Decision, error) {
 	s := removeInvisibleRunes(response)
 	s = strings.TrimSpace(s)
@@ -1735,6 +1763,7 @@ func extractDecisions(response string) ([]Decision, error) {
 		jsonContent := strings.TrimSpace(m[1])
 		jsonContent = compactArrayOpen(jsonContent)
 		jsonContent = fixMissingQuotes(jsonContent)
+		jsonContent = cleanEmptyStringFields(jsonContent)
 		if err := validateJSONFormat(jsonContent); err != nil {
 			return nil, fmt.Errorf("JSON format validation failed: %w\nJSON content: %s\nFull response:\n%s", err, jsonContent, response)
 		}
@@ -1765,6 +1794,7 @@ func extractDecisions(response string) ([]Decision, error) {
 
 	jsonContent = compactArrayOpen(jsonContent)
 	jsonContent = fixMissingQuotes(jsonContent)
+	jsonContent = cleanEmptyStringFields(jsonContent)
 
 	if err := validateJSONFormat(jsonContent); err != nil {
 		return nil, fmt.Errorf("JSON format validation failed: %w\nJSON content: %s\nFull response:\n%s", err, jsonContent, response)
@@ -1812,17 +1842,29 @@ func validateJSONFormat(jsonStr string) error {
 		return fmt.Errorf("JSON must start with [{ (whitespace allowed), actual: %s", trimmed[:min(20, len(trimmed))])
 	}
 
-	if strings.Contains(jsonStr, "~") {
-		return fmt.Errorf("JSON cannot contain range symbol ~, all numbers must be precise single values")
+	// Check for ~ symbol in numeric fields only (not in string values like "reasoning")
+	// Pattern: "field": ~123  (invalid) vs "reasoning": "price ~89548" (valid)
+	// We look for ~ followed by digits, but NOT inside quotes
+	tildeOutsideQuotes := regexp.MustCompile(`"(?:[^"\\]|\\.)*"|(~\s*[0-9])`)
+	matches := tildeOutsideQuotes.FindAllString(jsonStr, -1)
+	for _, match := range matches {
+		// If match starts with ~, it's a tilde followed by digits (invalid)
+		// If match starts with ", it's inside quotes (valid, skip)
+		if strings.HasPrefix(match, "~") {
+			return fmt.Errorf("JSON cannot contain range symbol ~ in numeric fields, all numbers must be precise single values")
+		}
 	}
 
-	for i := 0; i < len(jsonStr)-4; i++ {
-		if jsonStr[i] >= '0' && jsonStr[i] <= '9' &&
-			jsonStr[i+1] == ',' &&
-			jsonStr[i+2] >= '0' && jsonStr[i+2] <= '9' &&
-			jsonStr[i+3] >= '0' && jsonStr[i+3] <= '9' &&
-			jsonStr[i+4] >= '0' && jsonStr[i+4] <= '9' {
-			return fmt.Errorf("JSON numbers cannot contain thousand separator comma, found: %s", jsonStr[i:min(i+10, len(jsonStr))])
+	// Check for thousand separator comma in numeric fields only (not in string values like "reasoning")
+	// Pattern: "field": 8,750  (invalid) vs "reasoning": "price $88,750" (valid)
+	// We look for digit,digit,digit,digit but NOT inside quotes
+	commaPattern := regexp.MustCompile(`"(?:[^"\\]|\\.)*"|([0-9],[0-9]{3})`)
+	commaMatches := commaPattern.FindAllString(jsonStr, -1)
+	for _, match := range commaMatches {
+		// If match starts with digit, it's a number with comma (invalid)
+		// If match starts with ", it's inside quotes (valid, skip)
+		if !strings.HasPrefix(match, "\"") {
+			return fmt.Errorf("JSON numbers cannot contain thousand separator comma, found: %s", match)
 		}
 	}
 
@@ -1908,11 +1950,9 @@ func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoi
 
 		tolerance := maxPositionValue * 0.01
 		if d.PositionSizeUSD > maxPositionValue+tolerance {
-			if d.Symbol == "BTCUSDT" || d.Symbol == "ETHUSDT" {
-				return fmt.Errorf("BTC/ETH single coin position value cannot exceed %.0f USDT (%.1fx account equity), actual: %.0f", maxPositionValue, posRatio, d.PositionSizeUSD)
-			} else {
-				return fmt.Errorf("altcoin single coin position value cannot exceed %.0f USDT (%.1fx account equity), actual: %.0f", maxPositionValue, posRatio, d.PositionSizeUSD)
-			}
+			logger.Infof("⚠️  [Position Size Fallback] %s position size exceeded (%.2f USDT > %.0f USDT), auto-adjusting to limit %.0f USDT",
+				d.Symbol, d.PositionSizeUSD, maxPositionValue, maxPositionValue)
+			d.PositionSizeUSD = maxPositionValue
 		}
 		if d.StopLoss <= 0 || d.TakeProfit <= 0 {
 			return fmt.Errorf("stop loss and take profit must be greater than 0")

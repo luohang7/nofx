@@ -122,11 +122,11 @@ export function RiskControlEditor({
                 }
                 disabled={disabled}
                 min={1}
-                max={20}
+                max={125}
                 className="flex-1 accent-yellow-500"
               />
               <span
-                className="w-12 text-center font-mono"
+                className="w-16 text-center font-mono text-sm"
                 style={{ color: '#F0B90B' }}
               >
                 {config.btc_eth_max_leverage ?? 5}x
@@ -153,11 +153,11 @@ export function RiskControlEditor({
                 }
                 disabled={disabled}
                 min={1}
-                max={20}
+                max={75}
                 className="flex-1 accent-yellow-500"
               />
               <span
-                className="w-12 text-center font-mono"
+                className="w-16 text-center font-mono text-sm"
                 style={{ color: '#F0B90B' }}
               >
                 {config.altcoin_max_leverage ?? 5}x
@@ -195,12 +195,12 @@ export function RiskControlEditor({
                 }
                 disabled={disabled}
                 min={0.5}
-                max={10}
+                max={125}
                 step={0.5}
                 className="flex-1 accent-green-500"
               />
               <span
-                className="w-12 text-center font-mono"
+                className="w-16 text-center font-mono text-sm"
                 style={{ color: '#0ECB81' }}
               >
                 {config.btc_eth_max_position_value_ratio ?? 5}x
@@ -227,12 +227,12 @@ export function RiskControlEditor({
                 }
                 disabled={disabled}
                 min={0.5}
-                max={10}
+                max={75}
                 step={0.5}
                 className="flex-1 accent-green-500"
               />
               <span
-                className="w-12 text-center font-mono"
+                className="w-16 text-center font-mono text-sm"
                 style={{ color: '#0ECB81' }}
               >
                 {config.altcoin_max_position_value_ratio ?? 1}x

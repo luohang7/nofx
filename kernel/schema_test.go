@@ -53,22 +53,15 @@ func TestDataDictionary(t *testing.T) {
 // TestTradingRules 测试交易规则定义
 func TestTradingRules(t *testing.T) {
 	t.Run("RiskManagement", func(t *testing.T) {
-		maxMargin := TradingRules.RiskManagement["MaxMarginUsage"]
+		// MaxMarginUsage removed - now configured in strategy settings
+		maxPositionLoss := TradingRules.RiskManagement["MaxPositionLoss"]
 
-		if maxMargin.Value != 0.30 {
-			t.Errorf("Expected MaxMarginUsage=0.30, got %v", maxMargin.Value)
+		if maxPositionLoss.GetDesc(LangChinese) == "" {
+			t.Error("MaxPositionLoss DescZH is empty")
 		}
 
-		if maxMargin.GetDesc(LangChinese) == "" {
-			t.Error("MaxMarginUsage DescZH is empty")
-		}
-
-		if maxMargin.GetDesc(LangEnglish) == "" {
-			t.Error("MaxMarginUsage DescEN is empty")
-		}
-
-		if !strings.Contains(maxMargin.DescZH, "30%") {
-			t.Error("MaxMarginUsage DescZH should mention 30%")
+		if maxPositionLoss.GetDesc(LangEnglish) == "" {
+			t.Error("MaxPositionLoss DescEN is empty")
 		}
 	})
 

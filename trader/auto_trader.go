@@ -793,6 +793,9 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 		}
 
 		// Get peak profit rate for this position
+		// Update peak PnL cache first (for AI information, NOT for auto-close)
+		at.UpdatePeakPnL(symbol, side, pnlPct)
+
 		at.peakPnLCacheMutex.RLock()
 		peakPnlPct := at.peakPnLCache[posKey]
 		at.peakPnLCacheMutex.RUnlock()
@@ -817,6 +820,11 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 	for key := range at.positionFirstSeenTime {
 		if !currentPositionKeys[key] {
 			delete(at.positionFirstSeenTime, key)
+			// Also clean up peak PnL cache for closed positions
+			parts := strings.Split(key, "_")
+			if len(parts) == 2 {
+				at.ClearPeakPnLCache(parts[0], parts[1])
+			}
 		}
 	}
 
@@ -894,6 +902,8 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 					EntryPrice:   trade.EntryPrice,
 					ExitPrice:    trade.ExitPrice,
 					RealizedPnL:  trade.RealizedPnL,
+					Fee:          trade.Fee,
+					NetPnL:       trade.NetPnL,
 					PnLPct:       trade.PnLPct,
 					EntryTime:    entryTimeStr,
 					ExitTime:     exitTimeStr,
@@ -993,8 +1003,8 @@ func (at *AutoTrader) executeDecisionWithRecord(decision *kernel.Decision, actio
 	case "close_short":
 		return at.executeCloseShortWithRecord(decision, actionRecord)
 	case "hold", "wait":
-		// No execution needed, just record
-		return nil
+		// Check if we need to update stop-loss/take-profit for existing positions
+		return at.executeHoldWithRecord(decision, actionRecord)
 	default:
 		return fmt.Errorf("unknown action: %s", decision.Action)
 	}
@@ -1307,8 +1317,24 @@ func (at *AutoTrader) executeCloseLongWithRecord(decision *kernel.Decision, acti
 		logger.Infof("  📊 Using exchange position data: qty=%.8f, entry=%.2f", quantity, entryPrice)
 	}
 
+	// Determine close quantity: partial close if position_size_usd is specified, otherwise close all
+	var closeQuantity float64
+	if decision.PositionSizeUSD > 0 {
+		// Partial close: calculate quantity from USD amount
+		closeQuantity = decision.PositionSizeUSD / marketData.CurrentPrice
+		// Ensure we don't close more than we have
+		if closeQuantity > quantity {
+			closeQuantity = quantity
+		}
+		logger.Infof("  📊 Partial close: %.2f USDT (%.8f of %.8f)", decision.PositionSizeUSD, closeQuantity, quantity)
+	} else {
+		// Close all
+		closeQuantity = 0 // 0 means close all in the trader API
+		logger.Infof("  📊 Full close: %.8f", quantity)
+	}
+
 	// Close position
-	order, err := at.trader.CloseLong(decision.Symbol, 0) // 0 = close all
+	order, err := at.trader.CloseLong(decision.Symbol, closeQuantity)
 	if err != nil {
 		return err
 	}
@@ -1318,8 +1344,14 @@ func (at *AutoTrader) executeCloseLongWithRecord(decision *kernel.Decision, acti
 		actionRecord.OrderID = orderID
 	}
 
+	// Use actual closed quantity for recording
+	closedQuantity := quantity
+	if closeQuantity > 0 {
+		closedQuantity = closeQuantity
+	}
+
 	// Record order to database and poll for confirmation
-	at.recordAndConfirmOrder(order, decision.Symbol, "close_long", quantity, marketData.CurrentPrice, 0, entryPrice)
+	at.recordAndConfirmOrder(order, decision.Symbol, "close_long", closedQuantity, marketData.CurrentPrice, 0, entryPrice)
 
 	logger.Infof("  ✓ Position closed successfully")
 	return nil
@@ -1371,8 +1403,24 @@ func (at *AutoTrader) executeCloseShortWithRecord(decision *kernel.Decision, act
 		logger.Infof("  📊 Using exchange position data: qty=%.8f, entry=%.2f", quantity, entryPrice)
 	}
 
+	// Determine close quantity: partial close if position_size_usd is specified, otherwise close all
+	var closeQuantity float64
+	if decision.PositionSizeUSD > 0 {
+		// Partial close: calculate quantity from USD amount
+		closeQuantity = decision.PositionSizeUSD / marketData.CurrentPrice
+		// Ensure we don't close more than we have
+		if closeQuantity > quantity {
+			closeQuantity = quantity
+		}
+		logger.Infof("  📊 Partial close: %.2f USDT (%.8f of %.8f)", decision.PositionSizeUSD, closeQuantity, quantity)
+	} else {
+		// Close all
+		closeQuantity = 0 // 0 means close all in the trader API
+		logger.Infof("  📊 Full close: %.8f", quantity)
+	}
+
 	// Close position
-	order, err := at.trader.CloseShort(decision.Symbol, 0) // 0 = close all
+	order, err := at.trader.CloseShort(decision.Symbol, closeQuantity)
 	if err != nil {
 		return err
 	}
@@ -1382,10 +1430,97 @@ func (at *AutoTrader) executeCloseShortWithRecord(decision *kernel.Decision, act
 		actionRecord.OrderID = orderID
 	}
 
+	// Use actual closed quantity for recording
+	closedQuantity := quantity
+	if closeQuantity > 0 {
+		closedQuantity = closeQuantity
+	}
+
 	// Record order to database and poll for confirmation
-	at.recordAndConfirmOrder(order, decision.Symbol, "close_short", quantity, marketData.CurrentPrice, 0, entryPrice)
+	at.recordAndConfirmOrder(order, decision.Symbol, "close_short", closedQuantity, marketData.CurrentPrice, 0, entryPrice)
 
 	logger.Infof("  ✓ Position closed successfully")
+	return nil
+}
+
+// executeHoldWithRecord executes hold action with optional stop-loss/take-profit update
+func (at *AutoTrader) executeHoldWithRecord(decision *kernel.Decision, actionRecord *store.DecisionAction) error {
+	// Check if decision contains new stop-loss or take-profit values
+	hasNewStopLoss := decision.StopLoss > 0
+	hasNewTakeProfit := decision.TakeProfit > 0
+
+	if !hasNewStopLoss && !hasNewTakeProfit {
+		// No stop-loss/take-profit update needed
+		logger.Infof("  ⏸️ Hold: %s (no stop-loss/take-profit change)", decision.Symbol)
+		return nil
+	}
+
+	logger.Infof("  🔄 Hold with SL/TP update: %s | SL: %.2f | TP: %.2f",
+		decision.Symbol, decision.StopLoss, decision.TakeProfit)
+
+	// Get current position info (symbol, side, quantity)
+	positions, err := at.trader.GetPositions()
+	if err != nil {
+		return fmt.Errorf("failed to get positions: %w", err)
+	}
+
+	var positionSide string
+	var quantity float64
+	var entryPrice float64
+	found := false
+	for _, pos := range positions {
+		if pos["symbol"] == decision.Symbol {
+			positionSide = pos["side"].(string)
+			if amt, ok := pos["positionAmt"].(float64); ok {
+				quantity = amt
+				if quantity < 0 {
+					quantity = -quantity // Short position quantity is negative
+				}
+			}
+			if ep, ok := pos["entryPrice"].(float64); ok {
+				entryPrice = ep
+			}
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("no position found for %s", decision.Symbol)
+	}
+
+	// Log position details for debugging
+	positionValueUSDT := quantity * entryPrice
+	logger.Infof("  📊 Position details: qty=%.6f BTC (~%.2f USDT @ %.2f)", quantity, positionValueUSDT, entryPrice)
+
+	// Update stop-loss if provided
+	if hasNewStopLoss {
+		logger.Infof("  📉 Updating stop-loss: %s %s -> %.2f (limit order)", decision.Symbol, positionSide, decision.StopLoss)
+		// Cancel old stop-loss orders
+		if err := at.trader.CancelStopLossOrders(decision.Symbol); err != nil {
+			logger.Infof("  ⚠ Failed to cancel old stop-loss orders: %v", err)
+		}
+		// Set new stop-loss limit order
+		if err := at.trader.SetStopLoss(decision.Symbol, strings.ToUpper(positionSide), quantity, decision.StopLoss); err != nil {
+			return fmt.Errorf("failed to set new stop-loss: %w", err)
+		}
+		logger.Infof("  ✓ Stop-loss updated to %.2f (limit order)", decision.StopLoss)
+	}
+
+	// Update take-profit if provided
+	if hasNewTakeProfit {
+		logger.Infof("  📈 Updating take-profit: %s %s -> %.2f (limit order)", decision.Symbol, positionSide, decision.TakeProfit)
+		// Cancel old take-profit orders
+		if err := at.trader.CancelTakeProfitOrders(decision.Symbol); err != nil {
+			logger.Infof("  ⚠ Failed to cancel old take-profit orders: %v", err)
+		}
+		// Set new take-profit limit order
+		if err := at.trader.SetTakeProfit(decision.Symbol, strings.ToUpper(positionSide), quantity, decision.TakeProfit); err != nil {
+			return fmt.Errorf("failed to set new take-profit: %w", err)
+		}
+		logger.Infof("  ✓ Take-profit updated to %.2f (limit order)", decision.TakeProfit)
+	}
+
 	return nil
 }
 
@@ -1748,79 +1883,88 @@ func (at *AutoTrader) startDrawdownMonitor() {
 }
 
 // checkPositionDrawdown checks position drawdown situation
+// DISABLED: User wants to hold positions longer for more profit
 func (at *AutoTrader) checkPositionDrawdown() {
-	// Get current positions
-	positions, err := at.trader.GetPositions()
-	if err != nil {
-		logger.Infof("❌ Drawdown monitoring: failed to get positions: %v", err)
-		return
-	}
+	// Drawdown monitoring disabled - return immediately
+	return
+	//
+	// // Get current positions
+	// positions, err := at.trader.GetPositions()
+	// if err != nil {
+	// 	logger.Infof("❌ Drawdown monitoring: failed to get positions: %v", err)
+	// 	return
+	// }
 
-	for _, pos := range positions {
-		symbol := pos["symbol"].(string)
-		side := pos["side"].(string)
-		entryPrice := pos["entryPrice"].(float64)
-		markPrice := pos["markPrice"].(float64)
-		quantity := pos["positionAmt"].(float64)
-		if quantity < 0 {
-			quantity = -quantity // Short position quantity is negative, convert to positive
-		}
+	// for _, pos := range positions {
+	// 	symbol := pos["symbol"].(string)
+	// 	side := pos["side"].(string)
+	// 	entryPrice := pos["entryPrice"].(float64)
+	// 	markPrice := pos["markPrice"].(float64)
+	// 	quantity := pos["positionAmt"].(float64)
+	// 	if quantity < 0 {
+	// 		quantity = -quantity // Short position quantity is negative, convert to positive
+	// 	}
 
-		// Calculate current P&L percentage
-		leverage := 10 // Default value
-		if lev, ok := pos["leverage"].(float64); ok {
-			leverage = int(lev)
-		}
+	// 	// Calculate current P&L percentage
+	// 	leverage := 10 // Default value
+	// 	if lev, ok := pos["leverage"].(float64); ok {
+	// 		leverage = int(lev)
+	// 	}
 
-		var currentPnLPct float64
-		if side == "long" {
-			currentPnLPct = ((markPrice - entryPrice) / entryPrice) * float64(leverage) * 100
-		} else {
-			currentPnLPct = ((entryPrice - markPrice) / entryPrice) * float64(leverage) * 100
-		}
+	// 	var currentPnLPct float64
+	// 	if side == "long" {
+	// 		currentPnLPct = ((markPrice - entryPrice) / entryPrice) * float64(leverage) * 100
+	// 	} else {
+	// 		currentPnLPct = ((entryPrice - markPrice) / entryPrice) * float64(leverage) * 100
+	// 	}
 
-		// Construct unique position identifier (distinguish long/short)
-		posKey := symbol + "_" + side
+		// DISABLED: Peak PnL tracking - only used for drawdown monitoring
+		//
+		// // Construct unique position identifier (distinguish long/short)
+		// posKey := symbol + "_" + side
+		//
+		// // Get historical peak profit for this position
+		// at.peakPnLCacheMutex.RLock()
+		// peakPnLPct, exists := at.peakPnLCache[posKey]
+		// at.peakPnLCacheMutex.RUnlock()
+		//
+		// if !exists {
+		// 	// If no historical peak record, use current P&L as initial value
+		// 	_ = currentPnLPct
+		// 	at.UpdatePeakPnL(symbol, side, currentPnLPct)
+		// } else {
+		// 	// Update peak cache
+		// 	at.UpdatePeakPnL(symbol, side, currentPnLPct)
+		// }
 
-		// Get historical peak profit for this position
-		at.peakPnLCacheMutex.RLock()
-		peakPnLPct, exists := at.peakPnLCache[posKey]
-		at.peakPnLCacheMutex.RUnlock()
+		// DISABLED: Drawdown monitoring - user wants to hold positions longer for more profit
+		//
+		// // Calculate drawdown (magnitude of decline from peak)
+		// var drawdownPct float64
+		// if peakPnLPct > 0 && currentPnLPct < peakPnLPct {
+		// 	drawdownPct = ((peakPnLPct - currentPnLPct) / peakPnLPct) * 100
+		// }
 
-		if !exists {
-			// If no historical peak record, use current P&L as initial value
-			peakPnLPct = currentPnLPct
-			at.UpdatePeakPnL(symbol, side, currentPnLPct)
-		} else {
-			// Update peak cache
-			at.UpdatePeakPnL(symbol, side, currentPnLPct)
-		}
+		// // Check close position condition: profit > 5% and drawdown >= 40%
+		// if currentPnLPct > 5.0 && drawdownPct >= 40.0 {
+		// 	logger.Infof("🚨 Drawdown close position condition triggered: %s %s | Current profit: %.2f%% | Peak profit: %.2f%% | Drawdown: %.2f%%",
+		// 		symbol, side, currentPnLPct, peakPnLPct, drawdownPct)
 
-		// Calculate drawdown (magnitude of decline from peak)
-		var drawdownPct float64
-		if peakPnLPct > 0 && currentPnLPct < peakPnLPct {
-			drawdownPct = ((peakPnLPct - currentPnLPct) / peakPnLPct) * 100
-		}
+		// 	// Execute close position
+		// 	if err := at.emergencyClosePosition(symbol, side); err != nil {
+		// 		logger.Infof("❌ Drawdown close position failed (%s %s): %v", symbol, side, err)
+		// 	} else {
+		// 		logger.Infof("✅ Drawdown close position succeeded: %s %s", symbol, side)
+		// 		// Clear cache for this position after closing
+		// 		at.ClearPeakPnLCache(symbol, side)
+		// 	}
+		// } else if currentPnLPct > 5.0 {
+		// 	// Record situations close to close position condition (for debugging)
+		// 	logger.Infof("📊 Drawdown monitoring: %s %s | Profit: %.2f%% | Peak: %.2f%% | Drawdown: %.2f%%",
+		// 		symbol, side, currentPnLPct, peakPnLPct, drawdownPct)
+		// }
 
-		// Check close position condition: profit > 5% and drawdown >= 40%
-		if currentPnLPct > 5.0 && drawdownPct >= 40.0 {
-			logger.Infof("🚨 Drawdown close position condition triggered: %s %s | Current profit: %.2f%% | Peak profit: %.2f%% | Drawdown: %.2f%%",
-				symbol, side, currentPnLPct, peakPnLPct, drawdownPct)
-
-			// Execute close position
-			if err := at.emergencyClosePosition(symbol, side); err != nil {
-				logger.Infof("❌ Drawdown close position failed (%s %s): %v", symbol, side, err)
-			} else {
-				logger.Infof("✅ Drawdown close position succeeded: %s %s", symbol, side)
-				// Clear cache for this position after closing
-				at.ClearPeakPnLCache(symbol, side)
-			}
-		} else if currentPnLPct > 5.0 {
-			// Record situations close to close position condition (for debugging)
-			logger.Infof("📊 Drawdown monitoring: %s %s | Profit: %.2f%% | Peak: %.2f%% | Drawdown: %.2f%%",
-				symbol, side, currentPnLPct, peakPnLPct, drawdownPct)
-		}
-	}
+	// }
 }
 
 // emergencyClosePosition emergency close position function
